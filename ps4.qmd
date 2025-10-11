@@ -1,0 +1,162 @@
+---
+title: "STATS 506 - Problem Set 4"
+author: "Mina Dao"
+format: html
+editor: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Loading Packages
+
+```{r, warning = FALSE, message = FALSE}
+library(dplyr)
+library(ggplot2)
+library(GGally)
+library(microbenchmark)
+library(tidyverse)
+library(nzelect)
+```
+
+## Problem 1 - Tidyverse: New Zealand
+
+```{r}
+# load datasets
+data(nzge, package = "nzelect")
+head(nzge)
+```
+
+#### a. Generate a table of vote count per year/type
+
+```{r}
+voting_summary <- nzge %>% 
+  group_by(election_year, voting_type) %>%
+  summarise(
+    total_votes = sum(votes, na.rm = TRUE), .groups = 'drop'
+  ) %>% 
+  arrange(desc(total_votes)) %>%
+  select(election_year, voting_type, total_votes)
+voting_summary
+```
+
+#### b. 2014 election, report proportion of votes for each party in the Candidate election
+
+```{r}
+candidate_vote_2014 <- nzge %>% 
+  filter(election_year == 2014 & voting_type == "Candidate") %>%
+  group_by(party) %>%
+  summarise(total_votes = sum(votes, na.rm = TRUE)) %>% 
+  mutate(
+    total_all_parties = sum(total_votes),
+    percentage = round(total_votes / total_all_parties * 100.0, 2)
+  ) %>% ungroup %>%
+  select(party, total_votes, percentage) %>%
+  arrange(desc(percentage))
+candidate_vote_2014
+```
+
+#### c. For each year, party won the Candidate vote, and party won the Party vote
+
+```{r}
+win_party_by_year <- nzge %>% 
+  group_by(election_year, voting_type, party) %>%
+  summarise(total_votes = sum(votes, na.rm = TRUE)) %>% 
+  mutate(
+    total_all_parties = sum(total_votes),
+    percentage = round(total_votes / total_all_parties * 100.0, 2),
+  ) %>%
+  slice_max(percentage) %>%
+  ungroup %>%
+  select(election_year, voting_type, party, total_votes, percentage) 
+win_party_by_year
+```
+
+## Problem 2 - Tidyverse: Tennis
+
+```{r}
+tennis <- read.delim2("https://raw.githubusercontent.com/JeffSackmann/tennis_atp/refs/heads/master/atp_matches_2019.csv", sep = ",")
+head(tennis, 10)
+```
+
+#### a. Number of tournaments in 2019
+
+```{r}
+num_tournaments <- tennis %>% 
+  summarise(num_tournaments = n_distinct(tourney_id))
+num_tournaments
+```
+We see that each tourney has a unique `tourney_id`, so we will count the number of unique `tourney_id`, and it is the number of tournaments which took place in 2019. There are 128 tournaments.
+
+#### b. Multi-win players
+
+```{r echo = FALSE}
+# players with more than 1 win
+multi_win_player <- tennis %>%
+  group_by(tourney_id) %>%
+  filter(round == "F") %>%
+  filter(!is.na(winner_name)) %>%
+  group_by(winner_name) %>%
+  summarise(num_win = n(), .groups = 'drop') %>%
+  filter(num_win > 1) %>%
+  arrange(desc(num_win)) 
+multi_win_player
+
+# number of players who won more than 1 tournament
+num_multi_win <- multi_win_player %>% nrow()
+num_multi_win
+
+# number of tournaments most winning player(s) won
+num_most_win <- multi_win_player %>% slice_max(num_win)
+num_most_win
+```
+
+
+I saw that the first-listed match of each tournament is the final match of that tournament where `round = F` (final), so the winner of that match is the winner of the whole tournament. Then we will count the number of tournaments each winner won.
+
+There are 12 players who won more than one tournament. The most winning players won 5 tournaments.
+
+
+#### c. Is there any evidence that winners have more aces than losers? 
+
+```{r}
+aces_compare <- tennis %>%
+  filter(!is.na(w_ace) & !is.na(l_ace)) %>%
+  summarise(
+    mean_aces_win = round(mean(w_ace), 4),
+    mean_aces_lose = round(mean(l_ace), 4)
+  )
+aces_compare
+```
+On average, winners got 7.49 aces per match, while losers got 5.79 aces per match. Hence, on average, winners do have more aces than losers.
+
+
+#### d. Player(s) with the highest win-rate. Restrict to players with at least 5 matches.
+
+```{r}
+highest_win_rate <- tennis %>%
+  # gather all matches for each player (both as winner and loser)
+  pivot_longer(
+    cols = c(winner_name, loser_name),
+    names_to = "result",
+    values_to = "player_name"
+  ) %>% 
+  mutate(win = ifelse(result == "winner_name", 1, 0)) %>%
+  group_by(player_name) %>%
+  summarise(
+    match_played = n(),
+    wins = sum(win),
+    win_rate = round(wins / match_played * 100, 2),
+    .groups = 'drop'
+  ) %>% 
+  filter(match_played >= 5) %>%
+  slice_max(win_rate) 
+highest_win_rate
+```
+We need to reshape the players' names into a column, so we use `pivot_longer`. The player with the highest win-rate is Rafael Nadal with a win-rate of $86.96\%$, $60$ wins out of $69$ matches played.
+
+#### Problem 3: Visualization
+
