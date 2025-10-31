@@ -221,7 +221,7 @@ I chose to account for 50 states + DC, and not the US territories.
 
 #### a. Major and minor spikes
 
-```{r, warning = FALSE align = c fig.width=8, fig.height=6}
+```{r, warning = FALSE fig.width=8, fig.height=6}
 us_states_date <- covid_data%>%
   group_by(date) %>%
   summarise(total_cases = sum(cases))
@@ -308,7 +308,7 @@ States with highest rates per 100k population are Rhode Island, Alaska, and Kent
 
 #### c. First five states to experience Covid substantially
 
-```{r align = c fig.width=8, fig.height=6}
+```{r fig.width=8, fig.height=6}
 us_states_start <- covid_data %>%
   filter(date > as.Date("2020-03-20"), 
          date < as.Date("2020-04-20"),
