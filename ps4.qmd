@@ -16,14 +16,13 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r, warning = FALSE, message = FALSE}
 library(dplyr)
 library(ggplot2)
-library(GGally)
-library(microbenchmark)
 library(tidyverse)
 library(nzelect)
 library(zoo)
 library(lubridate)
 library(scales)
 library(patchwork)
+library(infer)
 ```
 
 ## Problem 1 - Tidyverse: New Zealand
@@ -56,7 +55,7 @@ candidate_vote_2014 <- nzge %>%
   summarise(total_votes = sum(votes, na.rm = TRUE)) %>% 
   mutate(
     total_all_parties = sum(total_votes),
-    percentage = round(total_votes / total_all_parties * 100.0, 2)
+    percentage = round(total_votes / total_all_parties * 100.0, 3)
   ) %>% ungroup %>%
   select(party, total_votes, percentage) %>%
   arrange(desc(percentage))
@@ -75,8 +74,15 @@ win_party_by_year <- nzge %>%
   ) %>%
   slice_max(percentage) %>%
   ungroup %>%
-  select(election_year, voting_type, party, total_votes, percentage) 
-win_party_by_year
+  select(election_year, voting_type, party) 
+
+win_party <- win_party_by_year %>%
+  pivot_wider(
+    names_from = voting_type,
+    values_from = party
+  ) %>% arrange(election_year)
+
+win_party
 ```
 
 ## Problem 2 - Tidyverse: Tennis
@@ -131,11 +137,17 @@ There are 12 players who won more than one tournament. The most winning players 
 ```{r}
 aces_compare <- tennis %>%
   filter(!is.na(w_ace) & !is.na(l_ace)) %>%
-  summarise(
-    mean_aces_win = round(mean(w_ace), 4),
-    mean_aces_lose = round(mean(l_ace), 4)
+  select(w_ace, l_ace) 
+
+aces <- aces_compare %>%
+  pivot_longer(
+    cols = c(w_ace, l_ace),
+    names_to = "group",
+    values_to = "ace_count"
   )
-aces_compare
+  
+
+t_test(aces_compare, w_ace - l_ace)
 ```
 On average, winners got 7.49 aces per match, while losers got 5.79 aces per match. Hence, on average, winners do have more aces than losers.
 
@@ -203,67 +215,85 @@ covid_data <- covid_data %>% arrange(date)
 covid_data <- covid_data %>% 
   left_join(state_populations, by = "state") %>%
   mutate(cases_per_100k = (cases_avg / population) * 100000)
+
 ```
 I chose to account for 50 states + DC, and not the US territories.
 
 #### a. Major and minor spikes
 
-```{r, warning = FALSE}
-# calculate national data
-national_data <- covid_data %>%
-  filter(!is.na(cases_avg)) %>%
+```{r, warning = FALSE align = c fig.width=8, fig.height=6}
+us_states_date <- covid_data%>%
   group_by(date) %>%
-  summarize(total_cases = sum(cases_avg, na.rm = TRUE)) %>%
-  ungroup() %>%
-  mutate(
-    cases_7day = zoo::rollmean(total_cases, 7, fill = NA, align = "right")
-  ) %>%
-  filter(!is.na(cases_7day))
+  summarise(total_cases = sum(cases))
+  
+us_states_week <- covid_data %>%
+  mutate(week = floor_date(date, "week")) %>%
+  group_by(week) %>%
+  summarise(cases_week_avg = sum(cases) / 7)
 
-# use percentiles to detect spikes
-spike_data <- national_data %>%
-  mutate(
-    percentile_rank = percent_rank(cases_7day),
-    is_spike = percentile_rank > 0.85,  # Top 15% are spikes
-    spike_magnitude = ifelse(is_spike, percentile_rank, NA_real_)
-  ) %>%
-  filter(is_spike) %>%
-  mutate(
-    spike_type = if_else(percentile_rank > 0.95, "Major Spike", "Minor Spike")
-  )
-  
-
-# plot
-p1 <- national_data %>%
-  ggplot(aes(x = date, y = cases_7day)) +
-  geom_line(color = "deepskyblue2", linewidth = 1) +
-  
-  # add percentiles for reference
-  geom_hline(yintercept = quantile(national_data$cases_7day, 0.95), 
-             color = "red", linetype = "dashed", alpha = 0.5) +
-  geom_hline(yintercept = quantile(national_data$cases_7day, 0.85), 
-             color = "orange", linetype = "dashed", alpha = 0.5) +
-  
-  geom_point(data = spike_data, 
-             aes(color = spike_type, shape = spike_type), 
-             size = 2, alpha = 0.8) +
-  scale_color_manual(
-    values = c("Major Spike" = "brown1", 
-               "Minor Spike" = "darkseagreen")
-  ) +
-  scale_shape_manual(
-    values = c("Major Spike" = 17, 
-               "Minor Spike" = 20)
-  ) +
+p1 <- ggplot(us_states_date, aes(x = date, y = total_cases)) +
+  geom_point(color = "gray60", alpha = 0.5, size = 0.8, shape = 16) +
+  geom_line(data = us_states_week, 
+            aes(x = week, y = cases_week_avg, color = cases_week_avg), 
+            linewidth = 1.2, alpha = 0.9) +
+  scale_color_viridis_c(
+    option = "inferno", 
+    direction = -1,
+    name = "Average Cases Per Week") +
   labs(
     title = "COVID-19 Cases in the United States: Major and Minor Spikes",
-    subtitle = str_glue("Detected {sum(spike_data$spike_type == 'Major Spike')} major and ",
-                       "{sum(spike_data$spike_type == 'Minor Spike')} minor spikes"),
-    x = "Date",
-    y = "7-day Average of New Cases",
-    color = "Spike Type",
-    shape = "Spike Type",
-    caption = "Dashed lines: 95th (red) and 85th (orange) percentiles\nMajor spikes: >95th percentile, Minor spikes: 85th-95th percentile"
+    x = NULL,
+    y = "Average Cases Per Week",
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    legend.position = "bottom",
+    legend.title.position = "top",
+    legend.key.width = unit(3, "cm")
+  ) +
+  scale_y_continuous(labels = comma)
+
+p1
+```
+We can detect 1 major spike and 3 minor spikes.
+
+
+#### b. States with highest and lowest overall rates per population: 
+
+
+```{r warning = FALSE}
+p2 <- ggplot(covid_data, aes(x = date, y = cases_per_100k, group = state)) +
+  geom_line(color = "gray80", alpha = 0.3, linewidth = 0.4) +
+
+  geom_line(data = covid_data %>% 
+              group_by(state) %>%
+              summarize(max_rate = max(cases_per_100k, na.rm = TRUE)) %>%
+              arrange(desc(max_rate)) %>%
+              slice(1:3) %>%  
+              inner_join(covid_data, by = "state"),
+            aes(color = "States with Highest Rates"), linewidth = 1.2) +
+  
+  geom_line(data = covid_data %>% 
+              group_by(state) %>%
+              summarize(max_rate = max(cases_per_100k, na.rm = TRUE)) %>%
+              arrange(max_rate) %>%
+              slice(1:3) %>%  
+              inner_join(covid_data, by = "state"),
+            aes(color = "States with Lowest Rates"), linewidth = 1.2) +
+  
+  scale_color_manual(
+    values = c("States with Highest Rates" = "hotpink", 
+               "States with Lowest Rates" = "dodgerblue3"),
+    labels = c("Top States" = "Potentially Highest Rates", 
+               "Bottom States" = "Potentially Lowest Rates")
+  ) +
+  
+  labs(
+    title = "COVID-19 Case Rates: All 50 States + DC",
+    subtitle = "Red: Potential highest rate states | Blue: Potential lowest rate states | Gray: All others",
+    x = NULL,
+    y = "Average Cases per 100k"
   ) +
   theme_minimal() +
   theme(
@@ -272,111 +302,44 @@ p1 <- national_data %>%
     legend.position = "bottom"
   ) +
   scale_y_continuous(labels = comma)
-
-p1
-```
-We can detect 58 major spikes and 115 minor spikes.
-
-#### b. States with highest and lowest overall rates per population
-
-```{r}
-# calculate total cases per 100k for each state (only states + DC)
-state_totals <- covid_data %>%
-  filter(!is.na(cases_avg) & !is.na(population)) %>%
-  group_by(state) %>%
-  summarize(
-    total_cases_per_100k = sum(cases_per_100k, na.rm = TRUE),
-    population = first(population),
-    .groups = "drop"
-  ) %>%
-  arrange(desc(total_cases_per_100k))
-
-# get top and bottom states
-top_states <- state_totals %>% 
-  slice_head(n = 3) %>% 
-  pull(state)
-
-bottom_states <- state_totals %>% 
-  slice_tail(n = 3) %>% 
-  pull(state)
-
-selected_states <- covid_data %>% 
-  filter(state %in% c(top_states, bottom_states)) %>%
-  filter(!is.na(cases_per_100k))
-
-# plot
-p2 <- selected_states %>%
-  ggplot(aes(x = date, y = cases_per_100k, color = state)) +
-  geom_line(linewidth = 1, alpha = 0.8) +
-  facet_wrap(~state, scales = "free_y", ncol = 2) +
-  labs(
-    title = "States with Highest and Lowest Overall COVID-19 Rates",
-    x = "Date",
-    y = "Daily Cases per 100,000 people",
-    caption = "50 states + DC only"
-  ) +
-  theme_minimal() +
-  theme(
-    plot.title = element_text(face = "bold", size = 14),
-    plot.subtitle = element_text(size = 10),
-    axis.text.x = element_text(angle = 45, hjust = 1),
-    legend.position = "none",
-    strip.text = element_text(face = "bold")
-  ) +
-  scale_color_brewer(palette = "Set2")
-
 p2
 ```
 States with highest rates per 100k population are Rhode Island, Alaska, and Kentucky. States with lowest rates per 100k population are Oregon, Maryland, and Maine.
 
 #### c. First five states to experience Covid substantially
 
-```{r}
-# identify first five states with substantial spread (only states + DC)
-substantial <- covid_data %>%
-  filter(!is.na(cases_avg) & !is.na(population)) %>%
-  mutate(cases_per_100k = (cases_avg / population) * 100000) %>%
-  filter(!is.na(cases_per_100k)) %>%
-  group_by(state) %>%
-  filter(cases_per_100k >= 5) %>% # assume substantial as > 5
-  summarize(first_substantial_date = min(date)) %>%
-  ungroup() %>%
-  arrange(first_substantial_date) %>%
-  slice_head(n = 5)
+```{r align = c fig.width=8, fig.height=6}
+us_states_start <- covid_data %>%
+  filter(date > as.Date("2020-03-20"), 
+         date < as.Date("2020-04-20"),
+         cases_avg_per_100k > 15)
 
-first_substantial <- substantial %>% pull(state)
-
-# prepare data for plotting
-early_states <- covid_data %>% 
-  filter(state %in% first_substantial) %>%
-  left_join(substantial, by = "state") %>%
-  mutate(
-    cases_per_100k = (cases_avg / population) * 100000,
-    days_since_substantial = as.numeric(date - first_substantial_date)
-  ) %>%
-  filter(!is.na(cases_per_100k))
-
-# plot
-p3 <- early_states %>%
-  ggplot(aes(x = days_since_substantial, y = cases_per_100k, 
-             color = state, group = state)) +
-  geom_line(linewidth = 1) +
-  geom_vline(xintercept = 0, linetype = "dashed", alpha = 0.5) +
+p3 <- ggplot(us_states_start, 
+             aes(x = date, y = cases_avg_per_100k, color=state)) +
+  geom_line(linewidth = 1.0) + 
+  xlim(as.Date("2020-03-20"), as.Date("2020-04-20")) +
+  ylim(15, 60) +
+  scale_color_brewer(palette = "Spectral") + 
   labs(
-    title = "First Five States to Experience Substantial COVID-19 Spread",
-    x = "Days Since First Substantial Spread",
-    y = "Daily Cases per 100,000 Population",
-    color = "State",
+    title = "COVID-19 Case Rates by State (Mar – Apr 2020)",
+    x = NULL,
+    y = "Average Cases per 100k",
+    color = "State"
   ) +
   theme_minimal() +
   theme(
     plot.title = element_text(face = "bold", size = 14),
-    plot.subtitle = element_text(size = 10),
-    legend.position = "bottom"
-  ) +
-  scale_color_brewer(palette = "Set2") +
-  scale_y_continuous(trans = "pseudo_log", labels = comma)
+    legend.position = "bottom",
+    legend.title.position = "top"
+  )
 
 p3
 ```
 First five states to experience Covid substantially are Connecticut, Louisiana, Massachusetts, New Jersey, and New York.
+
+
+Distribution of sources:
+
+`infer` package: "https://infer.tidymodels.org/articles/t_test.html"
+
+census data: "https://www2.census.gov/programs-surveys/popest/datasets/2020-2023/state/totals/NST-EST2023-ALLDATA.csv"
