@@ -19,6 +19,7 @@ library(ggplot2)
 library(tidyverse)
 library(nzelect)
 library(infer)
+library(scales)
 ```
 
 ## Problem 1 - Tidyverse: New Zealand
