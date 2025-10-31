@@ -145,11 +145,16 @@ aces <- aces_compare %>%
     names_to = "group",
     values_to = "ace_count"
   )
-  
 
-t_test(aces_compare, w_ace - l_ace)
+infer_test <- aces %>%
+  t_test(
+    response = ace_count,
+    explanatory = group,
+    order = c("w_ace", "l_ace")
+  )
+infer_test
 ```
-On average, winners got 7.49 aces per match, while losers got 5.79 aces per match. Hence, on average, winners do have more aces than losers.
+We got p-value = $2.06 \times 10^{-26}$. We support that on average, winners have more aces than losers, with an estimated difference of $1.7$ aces.
 
 
 #### d. Player(s) with the highest win-rate. Restrict to players with at least 5 matches.
@@ -221,7 +226,7 @@ I chose to account for 50 states + DC, and not the US territories.
 
 #### a. Major and minor spikes
 
-```{r, warning = FALSE fig.width=8, fig.height=6}
+```{r, warning = FALSE, fig.width=8, fig.height=6}
 us_states_date <- covid_data%>%
   group_by(date) %>%
   summarise(total_cases = sum(cases))
@@ -308,7 +313,7 @@ States with highest rates per 100k population are Rhode Island, Alaska, and Kent
 
 #### c. First five states to experience Covid substantially
 
-```{r fig.width=8, fig.height=6}
+```{r, fig.width=8, fig.height=6}
 us_states_start <- covid_data %>%
   filter(date > as.Date("2020-03-20"), 
          date < as.Date("2020-04-20"),
